@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express from "express";
+import Fastify from "fastify";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
 
 async function createServer() {
-  const app = express();
+  const app = Fastify({ logger: true });
 
   let vite: import("vite").ViteDevServer | undefined;
 
@@ -17,17 +17,26 @@ async function createServer() {
       server: { middlewareMode: true },
       appType: "custom",
     });
+    await app.register(import("@fastify/middie"));
     app.use(vite.middlewares);
   } else {
-    const compression = (await import("compression")).default;
-    const sirv = (await import("sirv")).default;
-    app.use(compression());
-    app.use("/assets", sirv(path.resolve(__dirname, "dist/client/assets"), { maxAge: 31536000, immutable: true }));
-    app.use(sirv(path.resolve(__dirname, "dist/client"), { maxAge: 0 }));
+    await app.register(import("@fastify/compress"));
+    await app.register(import("@fastify/static"), {
+      root: path.resolve(__dirname, "dist/client"),
+      prefix: "/",
+      wildcard: false,
+      setHeaders(res, filePath) {
+        if (filePath.includes("/assets/")) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        } else {
+          res.setHeader("Cache-Control", "public, max-age=0");
+        }
+      },
+    });
   }
 
-  app.use("/{*path}", async (req, res) => {
-    const url = req.originalUrl;
+  app.get("*", async (request, reply) => {
+    const url = request.url;
 
     try {
       let template: string;
@@ -50,20 +59,18 @@ async function createServer() {
         .replace("<!--app-head-->", "")
         .replace("<!--app-html-->", appHtml);
 
-      res.status(200).set({ "Content-Type": "text/html" }).send(html);
+      reply.status(200).header("Content-Type", "text/html").send(html);
     } catch (e) {
       if (vite) {
         vite.ssrFixStacktrace(e as Error);
       }
-      console.error(e);
-      res.status(500).end((e as Error).message);
+      request.log.error(e);
+      reply.status(500).send((e as Error).message);
     }
   });
 
   const port = parseInt(process.env.PORT || "3000", 10);
-  app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-  });
+  await app.listen({ port, host: "0.0.0.0" });
 }
 
 createServer();
