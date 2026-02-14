@@ -15,3 +15,7 @@
 - React.js
   - Server Side Rendering を使います
 - Pagefind
+
+# 開発指針
+
+@t_wada の推奨するテスト駆動開発を実行すること。
